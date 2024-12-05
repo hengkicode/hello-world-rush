@@ -1,6 +1,6 @@
 use reqwest::Client;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{Write};
 use indicatif::{ProgressBar, ProgressStyle};
 
 #[tokio::main]

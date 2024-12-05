@@ -1,47 +1,45 @@
-use actix_files::Files;  // Untuk melayani file statis seperti CSS
-use actix_web::{web, App, HttpResponse, HttpServer};
-use tera::{Tera, Context};
-
-#[derive(serde::Serialize)]
-struct ApiResponse {
-    message: String,
-}
-
-// API handler
-async fn api_hello() -> HttpResponse {
-    let response = ApiResponse {
-        message: "Hello, this is a RESTful API!".to_string(),
-    };
-    HttpResponse::Ok().json(response)  // Mengirimkan response dalam format JSON
-}
-
-// Handler untuk halaman aplikasi dengan template
-async fn get_app(tera: web::Data<Tera>) -> HttpResponse {
-    let mut context = Context::new();
-    context.insert("title", "Welcome to the Application");
-
-    match tera.render("app.html", &context) {
-        Ok(body) => HttpResponse::Ok().body(body),
-        Err(_) => HttpResponse::InternalServerError().body("Template rendering error."),
-    }
-}
+use reqwest::Client;
+use std::fs::File;
+use std::io::{self, Write};
+use indicatif::{ProgressBar, ProgressStyle};
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
-    // Memuat template Tera
-    let tera = Tera::new("templates/**/*").unwrap();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let download_url = "https://eramart.co.id/uploads/KASIR.exe";
+    let file_name = "KASIR.exe";
 
-    // Cetak pesan bahwa server berjalan dan dapat diakses secara publik
-    println!("Server running at http://0.0.0.0:8082 (public)");
+    // Membuat client reqwest
+    let client = Client::new();
+    let mut response = client.get(download_url).send().await?;
 
-    HttpServer::new(move || {
-        App::new()
-            .app_data(web::Data::new(tera.clone()))  // Menyediakan template Tera ke seluruh aplikasi
-            .route("/api/hello", web::get().to(api_hello))  // RESTful API endpoint
-            .route("/app", web::get().to(get_app))   // Route untuk halaman aplikasi
-            .service(Files::new("/static", "./static"))  // Melayani file statis seperti CSS dan JS
-    })
-    .bind(("0.0.0.0", 8082))?  // Bind ke 0.0.0.0 agar dapat diakses secara publik
-    .run()
-    .await
+    // Mendapatkan panjang file untuk progress bar
+    let total_size = response.content_length().unwrap_or(0);
+    let mut dest = File::create(file_name)?;
+
+    // Setup progress bar
+    let pb = if total_size > 0 {
+        let bar = ProgressBar::new(total_size);
+        bar.set_style(ProgressStyle::default_bar()
+            .template("Downloading 🚀 [{bar:40}] {percent}%")
+            .progress_chars("=>-"));
+        bar
+    } else {
+        let bar = ProgressBar::new_spinner();
+        bar.set_message("Downloading...");
+        bar.enable_steady_tick(100);
+        bar
+    };
+
+    // Membaca dan menulis data byte ke file secara chunk
+    let mut downloaded = 0;
+    while let Some(chunk) = response.chunk().await? {
+        dest.write_all(&chunk)?;
+        downloaded += chunk.len() as u64;
+        pb.set_position(downloaded); // Update progress bar
+    }
+
+    pb.finish_with_message("Download selesai");
+
+    // Menutup terminal setelah selesai
+    std::process::exit(0);
 }

@@ -1,17 +1,17 @@
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
-// use anyhow::Error;
-use odbc_api::{buffers::TextRowSet, Environment, Cursor};
+use anyhow::Error;
+use odbc_api::{buffers::TextRowSet, ConnectionOptions, Environment, Cursor};
 use serde::Serialize;
 use std::env;
-use serde_json::Value; // Add this import for Value
 
 /// Maksimum jumlah baris yang diambil dalam satu batch
-// const BATCH_SIZE: usize = 5000;
+const BATCH_SIZE: usize = 5000;
 
 /// Struct untuk representasi JSON
 #[derive(Serialize)]
-struct AnyResult {
-    result: Value,
+struct Stock {
+    bara: String,
+    nama: String,
 }
 
 /// Handler untuk endpoint API
@@ -26,37 +26,34 @@ async fn get_stock() -> impl Responder {
 }
 
 /// Fungsi untuk mengambil data dari database SQL Server
-async fn fetch_stock_data() -> Result<Vec<AnyResult>, anyhow::Error> {
+async fn fetch_stock_data() -> Result<Vec<Stock>, Error> {
+    // Memuat variabel lingkungan dari file .env
     dotenv::dotenv().ok();
 
-    // Ambil parameter koneksi dari variabel lingkungan
+    // Ambil connection string dari variabel lingkungan
     let connection_string = env::var("DATABASE_URL")
         .expect("DATABASE_URL harus diatur di file .env");
     let query = env::var("QUERY").unwrap_or("SELECT bara, nama FROM stock".to_string());
 
     // Inisialisasi lingkungan ODBC
     let environment = Environment::new()?;
-    let connection = environment.connect_with_connection_string(&connection_string, odbc_api::ConnectionOptions::default())?;
+    let connection = environment.connect_with_connection_string(
+        &connection_string,
+        ConnectionOptions::default(),
+    )?;
 
     // Eksekusi query dan proses hasilnya
     let mut results = Vec::new();
     if let Some(mut cursor) = connection.execute(&query, ())? {
-        let mut buffers = TextRowSet::for_cursor(5000, &mut cursor, Some(4096))?;
+        let mut buffers = TextRowSet::for_cursor(BATCH_SIZE, &mut cursor, Some(4096))?;
         let mut row_set_cursor = cursor.bind_buffer(&mut buffers)?;
 
         while let Some(batch) = row_set_cursor.fetch()? {
-            let mut row_result: Vec<Value> = Vec::new();
-
-            // Loop through columns in each row
-            for col_index in 0..batch.num_cols() {
-                // Get each column value and store as Value
-                row_result.push(batch.at(col_index, 0)
-                    .map(|data| Value::String(String::from_utf8_lossy(data).to_string()))
-                    .unwrap_or(Value::Null)); // Use Value::Null if there's no data
+            for row_index in 0..batch.num_rows() {
+                let bara = String::from_utf8_lossy(batch.at(0, row_index).unwrap_or(&[])).to_string();
+                let nama = String::from_utf8_lossy(batch.at(1, row_index).unwrap_or(&[])).to_string();
+                results.push(Stock { bara, nama });
             }
-
-            // Push the row_result into results
-            results.push(AnyResult { result: Value::Array(row_result) });
         }
     }
 

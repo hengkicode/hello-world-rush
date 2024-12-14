@@ -1,45 +1,76 @@
-use reqwest::Client;
-use std::fs::File;
-use std::io::{Write};
-use indicatif::{ProgressBar, ProgressStyle};
+use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+// use anyhow::Error;
+use odbc_api::{buffers::TextRowSet, Environment, Cursor};
+use serde::Serialize;
+use std::env;
+use serde_json::Value; // Add this import for Value
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let download_url = "https://eramart.co.id/uploads/KASIR.exe";
-    let file_name = "KASIR.exe";
+/// Maksimum jumlah baris yang diambil dalam satu batch
+// const BATCH_SIZE: usize = 5000;
 
-    // Membuat client reqwest
-    let client = Client::new();
-    let mut response = client.get(download_url).send().await?;
+/// Struct untuk representasi JSON
+#[derive(Serialize)]
+struct AnyResult {
+    result: Value,
+}
 
-    // Mendapatkan panjang file untuk progress bar
-    let total_size = response.content_length().unwrap_or(0);
-    let mut dest = File::create(file_name)?;
+/// Handler untuk endpoint API
+async fn get_stock() -> impl Responder {
+    match fetch_stock_data().await {
+        Ok(data) => HttpResponse::Ok().json(data),
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            HttpResponse::InternalServerError().body("Error fetching stock data")
+        }
+    }
+}
 
-    // Setup progress bar
-    let pb = if total_size > 0 {
-        let bar = ProgressBar::new(total_size);
-        bar.set_style(ProgressStyle::default_bar()
-            .template("Downloading 🚀 [{bar:40}] {percent}%")
-            .progress_chars("=>-"));
-        bar
-    } else {
-        let bar = ProgressBar::new_spinner();
-        bar.set_message("Downloading...");
-        bar.enable_steady_tick(100);
-        bar
-    };
+/// Fungsi untuk mengambil data dari database SQL Server
+async fn fetch_stock_data() -> Result<Vec<AnyResult>, anyhow::Error> {
+    dotenv::dotenv().ok();
 
-    // Membaca dan menulis data byte ke file secara chunk
-    let mut downloaded = 0;
-    while let Some(chunk) = response.chunk().await? {
-        dest.write_all(&chunk)?;
-        downloaded += chunk.len() as u64;
-        pb.set_position(downloaded); // Update progress bar
+    // Ambil parameter koneksi dari variabel lingkungan
+    let connection_string = env::var("DATABASE_URL")
+        .expect("DATABASE_URL harus diatur di file .env");
+    let query = env::var("QUERY").unwrap_or("SELECT bara, nama FROM stock".to_string());
+
+    // Inisialisasi lingkungan ODBC
+    let environment = Environment::new()?;
+    let connection = environment.connect_with_connection_string(&connection_string, odbc_api::ConnectionOptions::default())?;
+
+    // Eksekusi query dan proses hasilnya
+    let mut results = Vec::new();
+    if let Some(mut cursor) = connection.execute(&query, ())? {
+        let mut buffers = TextRowSet::for_cursor(5000, &mut cursor, Some(4096))?;
+        let mut row_set_cursor = cursor.bind_buffer(&mut buffers)?;
+
+        while let Some(batch) = row_set_cursor.fetch()? {
+            let mut row_result: Vec<Value> = Vec::new();
+
+            // Loop through columns in each row
+            for col_index in 0..batch.num_cols() {
+                // Get each column value and store as Value
+                row_result.push(batch.at(col_index, 0)
+                    .map(|data| Value::String(String::from_utf8_lossy(data).to_string()))
+                    .unwrap_or(Value::Null)); // Use Value::Null if there's no data
+            }
+
+            // Push the row_result into results
+            results.push(AnyResult { result: Value::Array(row_result) });
+        }
     }
 
-    pb.finish_with_message("Download selesai");
+    Ok(results)
+}
 
-    // Menutup terminal setelah selesai
-    std::process::exit(0);
+/// Fungsi utama untuk menjalankan server
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Memulai server Actix Web
+    HttpServer::new(|| {
+        App::new().route("/stock", web::get().to(get_stock))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
 }

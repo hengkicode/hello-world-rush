@@ -7,8 +7,9 @@ async fn main() -> std::io::Result<()> {
     HttpServer::new(|| {
         App::new()
             .route("/stock", actix_web::web::get().to(controllers::stock::get_stock))
+            .route("/insertTmpDataSO/{ip}", actix_web::web::post().to(controllers::stock::insert_tmp_data_so))
     })
-    .bind("127.0.0.1:8083")?
+    .bind("0.0.0.0:8083")? // Dengarkan koneksi dari semua antarmuka jaringan
     .run()
     .await
 }

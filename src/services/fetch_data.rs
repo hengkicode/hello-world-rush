@@ -5,7 +5,7 @@ use std::env;
 
 const BATCH_SIZE: usize = 5000;
 
-async fn fetch_stock_data() -> Result<Vec<HashMap<String, String>>, Error> {
+pub async fn fetch_stock_data() -> Result<Vec<HashMap<String, String>>, Error> {
     dotenv::dotenv().ok();
     let connection_string = env::var("DATABASE_URL")
         .expect("DATABASE_URL harus diatur di file .env");
@@ -19,12 +19,9 @@ async fn fetch_stock_data() -> Result<Vec<HashMap<String, String>>, Error> {
 
     let mut results = Vec::new();
     if let Some(mut cursor) = connection.execute(&query, ())? {
-        // Get column names before binding the buffer
-      // Assuming this is part of your fetch_stock_data function
-    let column_names: Vec<String> = cursor.column_names()?
-    .map(|name_result| name_result.map(|name| name.to_string()))
-    .collect::<Result<Vec<String>, _>>()?;
-
+        let column_names: Vec<String> = cursor.column_names()?
+            .map(|name_result| name_result.map(|name| name.to_string()))
+            .collect::<Result<Vec<String>, _>>()?;
 
         let mut buffers = TextRowSet::for_cursor(BATCH_SIZE, &mut cursor, Some(4096))?;
         let mut row_set_cursor = cursor.bind_buffer(&mut buffers)?;
